@@ -1,0 +1,54 @@
+shader_type spatial;
+render_mode vertex_lighting; // Removed 'filter_nearest' from here
+
+// Godot 4 handles filtering directly inside the sampler uniform hint!
+uniform sampler2D texture_atlas : source_color, filter_nearest;
+
+varying vec3 v_world_pos;
+varying vec3 v_normal;
+
+void vertex() {
+	// Capture the world position and normals for triplanar-style mapping
+	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_normal = abs(NORMAL);
+}
+
+void fragment() {
+	vec2 local_uv = vec2(0.0);
+	
+	// Project the world positions onto the face based on the normal direction
+	if (v_normal.x > 0.5) {
+		local_uv = v_world_pos.zy; // West & East Faces
+	} else if (v_normal.y > 0.5) {
+		local_uv = v_world_pos.xz; // Up & Down Faces
+	} else {
+		local_uv = v_world_pos.xy; // Front & Back Faces
+	}
+	
+	// Wrap the world positions into a fractional 0.0 - 1.0 per block tile space
+	vec2 tile_fraction = fract(local_uv);
+	
+	// Flip the Y component to match Godot's 2D texture coordinate space orientation
+	tile_fraction.y = 1.0 - tile_fraction.y;
+	
+	// Your atlas dimensions from block.db
+	vec2 atlas_cols_rows = vec2(3.0, 4.0); 
+	
+	// Calculate where the individual block texture slot starts
+	vec2 tile_origin = floor(UV * atlas_cols_rows) / atlas_cols_rows;
+	
+	// Safe padding factor to eliminate microscopic line bleeding between tiles
+	const float UV_SHRINK = 0.005;
+	vec2 safe_fraction = mix(vec2(UV_SHRINK), vec2(1.0 - UV_SHRINK), tile_fraction);
+	
+	// Merge the slot start position with our safe, scaled fractional coordinates
+	vec2 finalized_uv = tile_origin + (safe_fraction / atlas_cols_rows);
+	
+	vec4 tex_color = texture(texture_atlas, finalized_uv);
+	ALBEDO = tex_color.rgb;
+	
+	// Alpha discard handling for any transparent block types
+	if (tex_color.a < 0.5) {
+		discard;
+	}
+}
